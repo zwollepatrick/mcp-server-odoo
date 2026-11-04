@@ -55,6 +55,7 @@ dev = [
 ]
 
 [project.scripts]
+mcpout-odoo = "mcp_server_odoo.mcpout_gateway:main"
 mcp-server-odoo = "mcp_server_odoo.__main__:main"
 
 [tool.hatch.build.targets.wheel]
