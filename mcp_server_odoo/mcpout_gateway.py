@@ -48,11 +48,30 @@ def _creds() -> dict:
         return {"url": env["ODOO_URL"], "db": env["ODOO_DB"], "user": env["ODOO_USER"], "key": env["ODOO_API_KEY"]}
     f = DATA / "odoo.json"
     if f.exists():
-        d = json.loads(f.read_text())
-        return {"url": d.get("url") or d.get("ODOO_URL", ""), "db": d.get("db") or d.get("database") or d.get("ODOO_DB", ""),
-                "user": d.get("user") or d.get("username") or d.get("login") or d.get("ODOO_USER", ""),
-                "key": d.get("api_key") or d.get("key") or d.get("password") or d.get("ODOO_API_KEY", "")}
+        return _from_json(json.loads(f.read_text()))
     raise RuntimeError("Kein Odoo-Zugang: ODOO_URL/ODOO_USER/ODOO_API_KEY oder $JARVIS_DATA/odoo.json fehlt")
+
+
+def _from_json(d: dict) -> dict:
+    """odoo.json in jeder üblichen Form lesen (flach oder eine Ebene verschachtelt, beliebige Schlüssel-Schreibweise)."""
+    flat: dict[str, str] = {}
+    for k, v in d.items():
+        if isinstance(v, dict):
+            flat.update({str(k2).lower(): v2 for k2, v2 in v.items() if isinstance(v2, (str, int))})
+        elif isinstance(v, (str, int)):
+            flat[str(k).lower()] = v
+
+    def pick(*names: str) -> str:
+        for n in names:
+            for k, v in flat.items():
+                if k == n or k.endswith("_" + n):
+                    return str(v)
+        return ""
+    c = {"url": pick("url", "host", "base_url"), "db": pick("db", "database", "dbname"),
+         "user": pick("user", "username", "login"), "key": pick("api_key", "apikey", "key", "password", "token")}
+    if not (c["url"] and c["user"] and c["key"]):
+        raise RuntimeError(f"odoo.json unvollständig (gefundene Schlüssel: {', '.join(sorted(flat))})")
+    return c
 
 
 def connect() -> Odoo:
@@ -314,7 +333,12 @@ def build_server(get_odoo: Callable[[], Odoo]):
 
 
 def main() -> None:
+    import logging
     import uvicorn
+    logging.basicConfig(level=logging.WARNING, format="%(asctime)s %(levelname)s %(message)s")
+    for name in ("mcp_server_odoo", "mcp_server_odoo.odoo_connection", "mcp_server_odoo.config"):
+        logging.getLogger(name).setLevel(logging.ERROR)   # Fork-Warnung „YOLO" passt hier nicht: Freigaben regelt dieses Modul
+    log = logging.getLogger("mcpout")
     state: dict[str, Odoo] = {}
 
     def get_odoo() -> Odoo:
@@ -322,6 +346,12 @@ def main() -> None:
             state["o"] = connect()
         return state["o"]
 
+    try:   # Selbsttest beim Start, ohne Geheimnisse im Log
+        o = get_odoo()
+        log.warning("Mcpout Odoo bereit: Odoo %s, uid %s, %d Operationen",
+                    o.conn.common_proxy.version().get("server_version"), o.conn.uid, len(OPS))
+    except Exception as e:
+        log.error("Odoo-Verbindung beim Start fehlgeschlagen: %s", str(e)[:300])
     mcp = build_server(get_odoo)
     # eigenes uvicorn ohne Access-Log: der Pfad enthält das Geheimnis
     uvicorn.run(mcp.streamable_http_app(), host=mcp.settings.host, port=mcp.settings.port, access_log=False)

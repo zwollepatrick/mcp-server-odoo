@@ -110,3 +110,11 @@ def test_server_requires_long_secret(monkeypatch):
     monkeypatch.setenv("MCPOUT_SECRET", "x" * 32)
     srv = G.build_server(lambda: None)
     assert srv.settings.streamable_http_path == "/" + "x" * 32 + "/mcp"
+
+
+def test_odoo_json_formats():
+    assert G._from_json({"url": "https://x", "db": "d", "user": "u", "api_key": "k"})["key"] == "k"
+    assert G._from_json({"odoo": {"URL": "https://x", "DATABASE": "d", "LOGIN": "u", "PASSWORD": "p"}})["user"] == "u"
+    assert G._from_json({"ODOO_URL": "https://x", "ODOO_DB": "d", "ODOO_USER": "u", "ODOO_API_KEY": "k"})["db"] == "d"
+    with pytest.raises(RuntimeError):
+        G._from_json({"url": "https://x"})
